@@ -1,0 +1,14 @@
+{% extends "biblioteca/base.html" %}
+
+{% block content %}
+<h1 class="mb-3">Registrar préstamo</h1>
+<form method="post" class="card card-body">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary" type="submit" name="buscar" value="1">Buscar</button>
+        <button class="btn btn-primary" type="submit">Registrar préstamo</button>
+        <a class="btn btn-secondary" href="{% url 'biblioteca:listar_prestamos' %}">Cancelar</a>
+    </div>
+</form>
+{% endblock %}

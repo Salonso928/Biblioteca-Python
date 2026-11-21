@@ -1,0 +1,30 @@
+{% extends "biblioteca/base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>Préstamos</h1>
+    <a class="btn btn-primary" href="{% url 'biblioteca:registrar_prestamo' %}">Nuevo préstamo</a>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-striped align-middle">
+        <thead><tr><th>Alumno</th><th>Libro</th><th>Fecha préstamo</th><th>Fecha esperada</th><th>Fecha real</th><th>Estado</th><th></th></tr></thead>
+        <tbody>
+        {% for prestamo in prestamos %}
+            <tr>
+                <td>{{ prestamo.alumno }}</td><td>{{ prestamo.libro }}</td>
+                <td>{{ prestamo.fecha_prestamo }}</td><td>{{ prestamo.fecha_devolucion_esperada }}</td>
+                <td>{{ prestamo.fecha_devolucion_real|default:"-" }}</td><td>{{ prestamo.estado }}</td>
+                <td>
+                    {% if prestamo.estado != "Devuelto" %}
+                        <a class="btn btn-sm btn-success" href="{% url 'biblioteca:registrar_devolucion' prestamo.id %}">Devolver</a>
+                    {% endif %}
+                </td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="7" class="text-center">No hay préstamos registrados.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
