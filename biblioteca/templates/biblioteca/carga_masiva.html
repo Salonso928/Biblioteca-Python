@@ -1,0 +1,53 @@
+{% extends "biblioteca/base.html" %}
+
+{% block content %}
+<h1 class="mb-3">Carga Masiva de Datos (Pandas)</h1>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form method="post" enctype="multipart/form-data" class="row g-3">
+            {% csrf_token %}
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">¿Qué deseas importar?</label>
+                <select name="tipo" class="form-select" required>
+                    <option value="libros">Libros (crea categorías automáticamente)</option>
+                    <option value="alumnos">Alumnos</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold">Archivo (.xlsx, .xls, .csv, .txt)</label>
+                <input type="file" name="archivo" class="form-control" accept=".xlsx,.xls,.csv,.txt" required>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">Subir</button>
+            </div>
+        </form>
+
+        <hr>
+        <small class="text-muted">
+            <strong>Columnas esperadas para Libros:</strong> <code>isbn, nombre, autor, editorial, anio_publicacion, categoria, stock_total, stock_disponible</code><br>
+            <strong>Columnas esperadas para Alumnos:</strong> <code>codigo_alumno, nombre, carrera, correo, estado</code>
+        </small>
+    </div>
+</div>
+
+{% if resumen %}
+<div class="card border-info">
+    <div class="card-header bg-info text-white fw-semibold">Resumen de Importación</div>
+    <div class="card-body">
+        <p class="mb-2">
+            <span class="badge bg-success me-2">Creados: {{ resumen.creados }}</span>
+            <span class="badge bg-primary me-2">Actualizados: {{ resumen.actualizados }}</span>
+            <span class="badge bg-warning text-dark">Omitidos: {{ resumen.omitidos }}</span>
+        </p>
+        {% if resumen.errores %}
+            <ul class="small text-danger mb-0">
+                {% for err in resumen.errores %}
+                    <li>{{ err }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "biblioteca/base.html" %}
+
+{% block content %}
+<h1 class="mb-4">Estadísticas de la Biblioteca (NumPy)</h1>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card text-center shadow-sm"><div class="card-body">
+            <h6 class="text-muted">Total Ejemplares</h6><h3>{{ total_ejemplares }}</h3>
+        </div></div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center shadow-sm"><div class="card-body">
+            <h6 class="text-muted">Disponibles</h6><h3 class="text-success">{{ total_disponibles }}</h3>
+        </div></div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center shadow-sm"><div class="card-body">
+            <h6 class="text-muted">Promedio Stock / Libro</h6><h3>{{ promedio_stock }}</h3>
+        </div></div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center shadow-sm"><div class="card-body">
+            <h6 class="text-muted">Disponibilidad</h6><h3 class="text-primary">{{ tasa_disponibilidad }}%</h3>
+        </div></div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="card shadow-sm h-100">
+            <div class="card-body text-center">
+                {% if grafico_categorias %}
+                    <img src="data:image/png;base64,{{ grafico_categorias }}" class="img-fluid" alt="Stock por categoría">
+                {% else %}
+                    <p class="text-muted my-5">No hay categorías ni libros suficientes para graficar.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card shadow-sm h-100">
+            <div class="card-body text-center">
+                {% if grafico_prestamos %}
+                    <img src="data:image/png;base64,{{ grafico_prestamos }}" class="img-fluid" alt="Préstamos por estado">
+                {% else %}
+                    <p class="text-muted my-5">Aún no hay préstamos registrados para graficar.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
