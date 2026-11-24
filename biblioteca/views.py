@@ -208,6 +208,118 @@ def buscar_libros_api(request):
     ]
     return JsonResponse({"resultados": resultados})
 
+def _texto(fila, columna, por_defecto=""):
+    """Obtiene un valor de texto limpio o un valor por defecto si está vacío/NaN."""
+    valor = fila.get(columna)
+    if pd.isna(valor):
+        return por_defecto
+    texto = str(valor).strip()
+    return texto if texto else por_defecto
+
+
+def _entero(fila, columna, por_defecto, minimo=None):
+    """Convierte a entero de forma segura; si falla o es menor al mínimo, usa por_defecto."""
+    numero = pd.to_numeric(fila.get(columna), errors="coerce")
+    if pd.isna(numero):
+        return por_defecto
+    entero = int(numero)
+    if minimo is not None and entero < minimo:
+        return por_defecto
+    return entero
+
+
+def _leer_dataframe(archivo):
+    nombre = archivo.name.lower()
+    if nombre.endswith((".xlsx", ".xls")):
+        df = pd.read_excel(archivo)
+    elif nombre.endswith((".csv", ".txt")):
+        df = pd.read_csv(archivo, sep=None, engine="python", encoding="utf-8-sig")
+    else:
+        raise ValueError("Formato no soportado. Usa .xlsx, .xls, .csv o .txt.")
+
+    df.columns = [str(col).strip().lower() for col in df.columns]
+    return df
+
+
+def _importar_libros(df):
+    stats = {"creados": 0, "actualizados": 0, "omitidos": 0, "errores": []}
+    anio_actual = timezone.now().year
+
+    for idx, fila in df.iterrows():
+        num_fila = idx + 2
+        isbn = _texto(fila, "isbn")
+        nombre = _texto(fila, "nombre")
+
+        if not isbn or not nombre:
+            stats["omitidos"] += 1
+            stats["errores"].append(f"Fila {num_fila}: ISBN o Nombre vacío.")
+            continue
+
+        stock_total = _entero(fila, "stock_total", por_defecto=1, minimo=0)
+        stock_disponible = _entero(fila, "stock_disponible", por_defecto=stock_total, minimo=0)
+        stock_disponible = min(stock_disponible, stock_total)
+
+        categoria, _ = Categoria.objects.get_or_create(
+            nombre=_texto(fila, "categoria", por_defecto="General")
+        )
+
+        try:
+            _, creado = Libro.objects.update_or_create(
+                isbn=isbn,
+                defaults={
+                    "nombre": nombre,
+                    "autor": _texto(fila, "autor", por_defecto="Autor Desconocido"),
+                    "editorial": _texto(fila, "editorial", por_defecto="Sin Editorial"),
+                    "anio_publicacion": _entero(fila, "anio_publicacion", por_defecto=anio_actual, minimo=1),
+                    "categoria": categoria,
+                    "stock_total": stock_total,
+                    "stock_disponible": stock_disponible,
+                },
+            )
+            stats["creados" if creado else "actualizados"] += 1
+        except Exception as e:
+            stats["omitidos"] += 1
+            stats["errores"].append(f"Fila {num_fila} ({nombre}): {e}")
+
+    return stats
+
+
+def _importar_alumnos(df):
+    stats = {"creados": 0, "actualizados": 0, "omitidos": 0, "errores": []}
+    patron_codigo = re.compile(r"^u[0-9]{8}$")
+    estados_validos = {Alumno.Estado.ACTIVO, Alumno.Estado.SUSPENDIDO}
+
+    for idx, fila in df.iterrows():
+        num_fila = idx + 2
+        codigo = _texto(fila, "codigo_alumno").lower()
+        nombre = _texto(fila, "nombre")
+
+        if not codigo or not nombre or not patron_codigo.match(codigo):
+            stats["omitidos"] += 1
+            stats["errores"].append(f"Fila {num_fila}: Código inválido o Nombre vacío.")
+            continue
+
+        estado_sin_formato = _texto(fila, "estado", por_defecto=Alumno.Estado.ACTIVO).upper()
+        estado = estado_sin_formato if estado_sin_formato in estados_validos else Alumno.Estado.ACTIVO
+
+        try:
+            _, creado = Alumno.objects.update_or_create(
+                codigo_alumno=codigo,
+                defaults={
+                    "nombre": nombre,
+                    "carrera": _texto(fila, "carrera", por_defecto="Sin Especificar"),
+                    "correo": _texto(fila, "correo", por_defecto=f"{codigo}@utp.edu.pe"),
+                    "estado": estado,
+                },
+            )
+            stats["creados" if creado else "actualizados"] += 1
+        except Exception as e:
+            stats["omitidos"] += 1
+            stats["errores"].append(f"Fila {num_fila} ({codigo}): {e}")
+
+    return stats
+
+
 def carga_masiva(request):
     resumen = None
 
@@ -219,123 +331,26 @@ def carga_masiva(request):
             messages.error(request, "Debes seleccionar un archivo.")
             return redirect("biblioteca:carga_masiva")
 
-        nombre_archivo = archivo.name.lower()
-
         try:
-            if nombre_archivo.endswith((".xlsx", ".xls")):
-                df = pd.read_excel(archivo)
-            elif nombre_archivo.endswith((".csv", ".txt")):
-                # Detecta automáticamente separadores (, ; o tabulación)
-                df = pd.read_csv(archivo, sep=None, engine="python", encoding="utf-8-sig")
-            else:
-                messages.error(request, "Formato no soportado. Usa .xlsx, .xls, .csv o .txt.")
-                return redirect("biblioteca:carga_masiva")
+            df = _leer_dataframe(archivo)
         except Exception as e:
             messages.error(request, f"Error al leer el archivo: {e}")
             return redirect("biblioteca:carga_masiva")
 
-        # Normalizar nombres de columnas (minúsculas y sin espacios extra)
-        df.columns = [str(col).strip().lower() for col in df.columns]
-
-        creados, actualizados, omitidos = 0, 0, 0
-        errores = []
-
         if tipo == "libros":
-            anio_actual = timezone.now().year
-
-            for idx, fila in df.iterrows():
-                num_fila = idx + 2  # +2 considerando encabezado en fila 1
-                isbn = str(fila.get("isbn", "")).strip() if pd.notna(fila.get("isbn")) else ""
-                nombre = str(fila.get("nombre", "")).strip() if pd.notna(fila.get("nombre")) else ""
-
-                if not isbn or not nombre:
-                    omitidos += 1
-                    errores.append(f"Fila {num_fila}: ISBN o Nombre vacío (omitida).")
-                    continue
-
-                autor = str(fila.get("autor", "")).strip() if pd.notna(fila.get("autor")) and str(fila.get("autor")).strip() else "Autor Desconocido"
-                editorial = str(fila.get("editorial", "")).strip() if pd.notna(fila.get("editorial")) and str(fila.get("editorial")).strip() else "Sin Editorial"
-                cat_nombre = str(fila.get("categoria", "")).strip() if pd.notna(fila.get("categoria")) and str(fila.get("categoria")).strip() else "General"
-
-                anio_val = pd.to_numeric(fila.get("anio_publicacion"), errors="coerce")
-                anio = int(anio_val) if pd.notna(anio_val) and anio_val > 0 else anio_actual
-
-                stock_tot_val = pd.to_numeric(fila.get("stock_total"), errors="coerce")
-                stock_total = int(stock_tot_val) if pd.notna(stock_tot_val) and stock_tot_val >= 0 else 1
-
-                stock_disp_val = pd.to_numeric(fila.get("stock_disponible"), errors="coerce")
-                stock_disponible = int(stock_disp_val) if pd.notna(stock_disp_val) and stock_disp_val >= 0 else stock_total
-
-                # Respetar CheckConstraint: stock_disponible <= stock_total
-                if stock_disponible > stock_total:
-                    stock_disponible = stock_total
-
-                categoria, _ = Categoria.objects.get_or_create(nombre=cat_nombre)
-
-                try:
-                    _, creado = Libro.objects.update_or_create(
-                        isbn=isbn,
-                        defaults={
-                            "nombre": nombre,
-                            "autor": autor,
-                            "editorial": editorial,
-                            "anio_publicacion": anio,
-                            "categoria": categoria,
-                            "stock_total": stock_total,
-                            "stock_disponible": stock_disponible,
-                        },
-                    )
-                    if creado:
-                        creados += 1
-                    else:
-                        actualizados += 1
-                except Exception as e:
-                    omitidos += 1
-                    errores.append(f"Fila {num_fila} ({nombre}): {e}")
-
+            stats = _importar_libros(df)
         elif tipo == "alumnos":
-            patron_codigo = re.compile(r"^u[0-9]{8}$")
+            stats = _importar_alumnos(df)
+        else:
+            messages.error(request, "Tipo de importación no válido.")
+            return redirect("biblioteca:carga_masiva")
 
-            for idx, fila in df.iterrows():
-                num_fila = idx + 2
-                codigo = str(fila.get("codigo_alumno", "")).strip().lower() if pd.notna(fila.get("codigo_alumno")) else ""
-                nombre = str(fila.get("nombre", "")).strip() if pd.notna(fila.get("nombre")) else ""
-
-                if not codigo or not nombre or not patron_codigo.match(codigo):
-                    omitidos += 1
-                    errores.append(f"Fila {num_fila}: Código inválido (debe ser u + 8 dígitos) o Nombre vacío.")
-                    continue
-
-                carrera = str(fila.get("carrera", "")).strip() if pd.notna(fila.get("carrera")) and str(fila.get("carrera")).strip() else "Sin Especificar"
-                correo = str(fila.get("correo", "")).strip() if pd.notna(fila.get("correo")) and str(fila.get("correo")).strip() else f"{codigo}@utp.edu.pe"
-                estado_raw = str(fila.get("estado", "")).strip().capitalize() if pd.notna(fila.get("estado")) else "Activo"
-                estado = estado_raw if estado_raw in (Alumno.Estado.ACTIVO, Alumno.Estado.SUSPENDIDO) else Alumno.Estado.ACTIVO
-
-                try:
-                    _, creado = Alumno.objects.update_or_create(
-                        codigo_alumno=codigo,
-                        defaults={
-                            "nombre": nombre,
-                            "carrera": carrera,
-                            "correo": correo,
-                            "estado": estado,
-                        },
-                    )
-                    if creado:
-                        creados += 1
-                    else:
-                        actualizados += 1
-                except Exception as e:
-                    omitidos += 1
-                    errores.append(f"Fila {num_fila} ({codigo}): {e}")
-
-        resumen = {
-            "creados": creados,
-            "actualizados": actualizados,
-            "omitidos": omitidos,
-            "errores": errores[:15],  # Mostrar los primeros 15 avisos
-        }
-        messages.success(request, f"Proceso finalizado: {creados} creados, {actualizados} actualizados, {omitidos} omitidos.")
+        resumen = {**stats, "errores": stats["errores"][:15]}
+        messages.success(
+            request,
+            f"Proceso finalizado: {stats['creados']} creados, "
+            f"{stats['actualizados']} actualizados, {stats['omitidos']} omitidos.",
+        )
 
     return render(request, "biblioteca/carga_masiva.html", {"resumen": resumen})
 
@@ -352,7 +367,7 @@ def estadisticas(request):
     libros = Libro.objects.select_related("categoria").all()
     prestamos = Prestamo.objects.all()
 
-    # --- 1. Métricas generales con NumPy ---
+    # aqui sacamos los datos usando numpy
     stocks_totales = np.array([l.stock_total for l in libros], dtype=int)
     stocks_disp = np.array([l.stock_disponible for l in libros], dtype=int)
 
@@ -361,7 +376,7 @@ def estadisticas(request):
     promedio_stock = round(float(np.mean(stocks_totales)), 2) if stocks_totales.size else 0
     tasa_disponibilidad = round((total_disponibles / total_ejemplares) * 100, 1) if total_ejemplares > 0 else 0
 
-    # --- 2. Gráfico 1: Stock Total vs Disponible por Categoría ---
+    # Grafico 1 es de  Stock Total vs Disponible por Categoría ---
     grafico_categorias = None
     categorias = list(Categoria.objects.all())
     if categorias:
@@ -383,7 +398,7 @@ def estadisticas(request):
         ax.grid(axis="y", linestyle="--", alpha=0.5)
         grafico_categorias = _fig_a_base64(fig)
 
-    # --- 3. Gráfico 2: Distribución de Préstamos por Estado ---
+    # grafico 2 de Distribución de Préstamos por Estado ---
     grafico_prestamos = None
     if prestamos.exists():
         estados = [Prestamo.Estado.ACTIVO, Prestamo.Estado.DEVUELTO, Prestamo.Estado.ATRASADO]
